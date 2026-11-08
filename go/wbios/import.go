@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -65,7 +66,10 @@ type record struct {
 //
 // 全部归一化为网关磁盘形态（嵌套驼峰）后原子写入 auths/workbuddy-<uid>.json。
 // 写盘前强制过一次 auth.Parse 自检，绝不写出网关读不出来的文件。
-func ImportJSON(dataDir, raw string) (string, error) {
+//
+// allowRefresh=true 时，只有 refreshToken 的条目会先联网换票（upstream.RefreshToken），
+// 换到的新 AT/RT 立刻落盘——RT 是单次轮换，晚一步原账号就作废。
+func ImportJSON(dataDir, raw string, allowRefresh bool) (string, error) {
 	dataDir = strings.TrimSpace(dataDir)
 	if dataDir == "" {
 		return "", fmt.Errorf("dataDir 不能为空")
@@ -87,6 +91,16 @@ func ImportJSON(dataDir, raw string) (string, error) {
 		res.Total++
 
 		na, nerr := normalizeRecord(rec.mapData, rec.key)
+
+		// 只有 refreshToken：开了自动换票就换，换到新票后按普通账号继续落盘。
+		if errors.Is(nerr, errNeedRefresh) {
+			if !allowRefresh {
+				nerr = fmt.Errorf("只有 refreshToken，缺 accessToken（未开启自动换票）")
+			} else {
+				na, nerr = doRefresh(na)
+			}
+		}
+
 		if nerr != nil {
 			res.Skipped++
 			uid := na.UID
@@ -326,14 +340,23 @@ func normalizeRecord(m map[string]any, sourceKey string) (normAccount, error) {
 	}
 
 	// accessToken 是硬前提，先判：它缺失时「uid 推不出来」只是表象，
-	// 真正卡住的是没票可换（只给 refreshToken 的映射形就是这种情况）。
+	// 真正卡住的是没票。只给 refreshToken 的条目不是错误而是「可换票」，
+	// 交给调用方决定要不要联网换（errNeedRefresh 哨兵）。
 	if strings.TrimSpace(na.AccessToken) == "" {
 		if strings.TrimSpace(na.RefreshToken) != "" {
-			return na, fmt.Errorf("只有 refreshToken，缺 accessToken（需先换票，本版不自动换）")
+			return na, errNeedRefresh
 		}
 		return na, fmt.Errorf("缺 accessToken")
 	}
+	return finalize(na)
+}
 
+// errNeedRefresh 表示「只有 refreshToken、缺 accessToken」，开自动换票即可救回。
+var errNeedRefresh = errors.New("需要换票")
+
+// finalize 补齐 uid / realm / domain，并做路径安全校验。
+// 归一化尾部与「换票之后」共用同一套收尾逻辑，避免两条路径判据漂移。
+func finalize(na normAccount) (normAccount, error) {
 	// uid 兜底 1：AT / RT 的 JWT payload.sub
 	if na.UID == "" {
 		if s := jwtSub(na.AccessToken); s != "" {
@@ -363,6 +386,27 @@ func normalizeRecord(m map[string]any, sourceKey string) (normAccount, error) {
 		return na, fmt.Errorf("uid 含非法字符：%q", na.UID)
 	}
 	return na, nil
+}
+
+// doRefresh 用 refreshToken 换票并回填账号字段。
+//
+// 注意 RT 是单次轮换：换票成功后旧 RT 立刻作废，新 RT 必须马上落盘，
+// 否则这个账号就永久废了。落盘由调用方紧接着完成（ImportJSON 里）。
+func doRefresh(na normAccount) (normAccount, error) {
+	refreshed, err := refreshAccount(na.UID, na.RefreshToken, na.Domain, na.Realm, na.EnterpriseID)
+	if err != nil {
+		return na, fmt.Errorf("换票失败：%w", err)
+	}
+	na.AccessToken = refreshed.AccessToken
+	na.RefreshToken = refreshed.RefreshToken // 轮换后的新 RT，不是原来那个
+	na.ExpiresAt = refreshed.ExpiresAt
+	if na.Domain == "" {
+		na.Domain = refreshed.Domain
+	}
+	if na.UID == "" {
+		na.UID = refreshed.UID
+	}
+	return finalize(na)
 }
 
 // sanitizeUID 文件名安全化：只留字母数字与 ._-

@@ -270,8 +270,10 @@ final class WBGateway: ObservableObject {
     /// 同步调用 Go 内核：纯本地解析 + 落盘，无网络，几十条也是毫秒级；
     /// 调用方仍应在后台线程调用，避免大文本卡主线程。
     @discardableResult
-    func importJSON(_ raw: String) -> WBImportResult? {
-        let ret = wbCall2(dataDir.path, raw) { cDir, cJSON in WbImportJSON(cDir, cJSON) }
+    func importJSON(_ raw: String, allowRefresh: Bool = true) -> WBImportResult? {
+        let ret = wbCall2(dataDir.path, raw) { cDir, cJSON in
+            WbImportJSON(cDir, cJSON, allowRefresh ? 1 : 0)
+        }
         guard let d = ret.data(using: .utf8) else {
             DispatchQueue.main.async { self.alert = "返回数据异常" }
             return nil

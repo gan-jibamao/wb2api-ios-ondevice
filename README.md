@@ -18,6 +18,7 @@ Go 内核编译成 iOS 静态库（`-buildmode=c-archive`），SwiftUI 外壳，
 | 调用与模型 | `ios/WB2API/WBGateway.swift` | `importJSON(_:)`、`WBImportResult` |
 | 入口 | `ios/WB2API/ContentView.swift` | 账号页新增「导入 JSON 账号」 |
 | CI | `.github/workflows/build.yml` | 增加 `go test ./...`、`nm` 校验导出符号、tag 自动发 Release |
+| 自动换票 | `go/wbios/refresh.go` | 复用 `internal/upstream.RefreshToken`；失败信息中文化；测试用 httptest 顶掉真端点 |
 
 ## JSON 导入支持的形态
 
@@ -44,8 +45,9 @@ Go 内核编译成 iOS 静态库（`-buildmode=c-archive`），SwiftUI 外壳，
 - `expires_at` 毫秒级自动 ÷1000（阈值 1e11，2026 年秒级约 1.8e9）
 - `uid` 缺失时先从 `accessToken`/`refreshToken` 的 JWT `payload.sub` 取，再退回映射键（纯数字手机号不算）
 - `realm` 缺失按 domain 后缀推断（`.workbuddy.ai` → global，否则 cn）
-- **只给 refreshToken 的条目会被跳过并给出原因**，不会写出半个文件（本版不做自动换票）
+- **只给 refreshToken 的条目**：面板上有「自动换票」开关（默认开）。开着就调 `POST /v2/plugin/auth/token/refresh`（`X-Refresh-Token` + `X-Auth-Refresh-Source: plugin`）换新票再落盘；关着就跳过并说明原因。换出的**新 RT 立刻写盘**——RT 单次轮换，晚一步原账号就废了
 - 写盘前强制过一次 `auth.Parse` 自检，网关读不出来的文件绝不落盘
+- 换票失败（401/403 或上游 5xx）→ 该条跳过并给中文原因，**不写半截文件**
 - 重复导入同一 uid 按「更新」处理；新载荷没带的昵称/企业 ID 沿用旧文件，不会把展示字段抹掉
 - 账号池目录每 5 秒做一次指纹比对（`internal/pool/watch.go`），**导入后无需重启网关**
 

@@ -28,7 +28,7 @@ import (
 )
 
 // Version 内核版本标识（随 App 版本走）。
-const Version = "v1.0-ios"
+const Version = "v1.1-ios"
 
 // DefaultListen 默认监听地址（仅本机回环，同机其它 App 可访问）。
 const DefaultListen = "127.0.0.1:7863"

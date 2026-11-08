@@ -3,10 +3,14 @@ package wbios
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"workbuddy2api/internal/auth"
 )
@@ -14,7 +18,7 @@ import (
 // runImport 跑一次导入并解出 ImportResult。
 func runImport(t *testing.T, dir, raw string) ImportResult {
 	t.Helper()
-	out, err := ImportJSON(dir, raw)
+	out, err := ImportJSON(dir, raw, false)
 	if err != nil {
 		t.Fatalf("ImportJSON error: %v", err)
 	}
@@ -169,7 +173,7 @@ func TestImportRoundtripParseable(t *testing.T) {
 func TestImportBadInput(t *testing.T) {
 	d := t.TempDir()
 	for _, bad := range []string{"   ", "hello", `"str"`, `[1,2,3]`, `{"foo":"bar"}`} {
-		if _, err := ImportJSON(d, bad); err == nil {
+		if _, err := ImportJSON(d, bad, false); err == nil {
 			t.Fatalf("输入 %q 应报错", bad)
 		}
 	}
@@ -210,5 +214,133 @@ func TestImportUpdateKeepsNickname(t *testing.T) {
 	}
 	if a.AccessToken != "AT11-new" {
 		t.Fatalf("token 未更新: %q", a.AccessToken)
+	}
+}
+
+// ---- 自动换票（httptest，绝不打真网络） ----
+
+// 假的换票端点：返回 code=0 + 新 AT/RT
+func fakeRefreshServer(t *testing.T, hits *int32) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(hits, 1)
+		if r.URL.Path != "/v2/plugin/auth/token/refresh" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("X-Refresh-Token") == "" {
+			w.WriteHeader(401)
+			_, _ = w.Write([]byte(`{"code":401,"msg":"no refresh token"}`))
+			return
+		}
+		if r.Header.Get("X-Auth-Refresh-Source") != "plugin" {
+			t.Errorf("缺 X-Auth-Refresh-Source: plugin")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"code":0,"msg":"ok","data":{
+			"accessToken":"NEW-AT","refreshToken":"NEW-RT","expiresIn":5184000,
+			"domain":"www.codebuddy.cn"}}`))
+	}))
+}
+
+// 12. 只给 refreshToken + 开自动换票 → 换到新票并落盘（RT 必须是新的）
+func TestImportAutoRefreshSuccess(t *testing.T) {
+	var hits int32
+	srv := fakeRefreshServer(t, &hits)
+	defer srv.Close()
+	importChatBaseCN = srv.URL
+	t.Cleanup(func() { importChatBaseCN = "" })
+
+	d := t.TempDir()
+	raw := `{"account":{"uid":"u-r1","nickname":"换票号"},
+	         "auth":{"refresh_token":"OLD-RT","domain":"www.codebuddy.cn","realm":"cn"}}`
+	out, err := ImportJSON(d, raw, true)
+	if err != nil {
+		t.Fatalf("ImportJSON: %v", err)
+	}
+	var env struct {
+		OK   bool         `json:"ok"`
+		Data ImportResult `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("bad envelope: %v", err)
+	}
+	if env.Data.Added != 1 {
+		t.Fatalf("added=%d skipped=%d %+v", env.Data.Added, env.Data.Skipped, env.Data.Items)
+	}
+	if atomic.LoadInt32(&hits) != 1 {
+		t.Fatalf("端点被调用 %d 次", hits)
+	}
+
+	b, _ := os.ReadFile(filepath.Join(d, "auths", "workbuddy-u-r1.json"))
+	a, perr := auth.Parse(b)
+	if perr != nil {
+		t.Fatalf("网关解析失败: %v", perr)
+	}
+	if a.AccessToken != "NEW-AT" {
+		t.Fatalf("AT 未换成新票: %q", a.AccessToken)
+	}
+	if a.RefreshToken != "NEW-RT" {
+		t.Fatalf("RT 未轮换落盘: %q（旧 RT 已作废，必须写新的）", a.RefreshToken)
+	}
+	if a.Nickname != "换票号" {
+		t.Fatalf("昵称丢了: %q", a.Nickname)
+	}
+	// expiresIn=60d
+	if want := time.Now().Add(60 * 24 * time.Hour).Unix(); a.ExpiresAt < want-3600 || a.ExpiresAt > want+3600 {
+		t.Fatalf("expiresAt=%d 与 60 天不符", a.ExpiresAt)
+	}
+}
+
+// 13. 换票端点 500 → 跳过并给原因，磁盘零文件（不写半截）
+func TestImportAutoRefreshUpstreamFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(500)
+		_, _ = w.Write([]byte(`{"code":500,"msg":"boom"}`))
+	}))
+	defer srv.Close()
+	importChatBaseCN = srv.URL
+	t.Cleanup(func() { importChatBaseCN = "" })
+
+	d := t.TempDir()
+	out, _ := ImportJSON(d, `{"13800000000":{"refresh_token":"RT-x"}}`, true)
+	var env struct {
+		Data ImportResult `json:"data"`
+	}
+	_ = json.Unmarshal([]byte(out), &env)
+	if env.Data.Skipped != 1 || env.Data.Added != 0 {
+		t.Fatalf("added=%d skipped=%d", env.Data.Added, env.Data.Skipped)
+	}
+	if !strings.Contains(env.Data.Items[0].Reason, "换票失败") {
+		t.Fatalf("原因里没有换票失败: %+v", env.Data.Items[0])
+	}
+	ents, _ := os.ReadDir(filepath.Join(d, "auths"))
+	if len(ents) != 0 {
+		t.Fatalf("换了半截还写了文件: %d 个", len(ents))
+	}
+}
+
+// 14. 关掉自动换票 → 一条都不能打网络（反证：开关必须真的拦住请求）
+func TestImportAutoRefreshDisabledNoNetwork(t *testing.T) {
+	var hits int32
+	srv := fakeRefreshServer(t, &hits)
+	defer srv.Close()
+	importChatBaseCN = srv.URL
+	t.Cleanup(func() { importChatBaseCN = "" })
+
+	d := t.TempDir()
+	out, _ := ImportJSON(d, `{"13800000000":{"refresh_token":"RT-y"}}`, false)
+	var env struct {
+		Data ImportResult `json:"data"`
+	}
+	_ = json.Unmarshal([]byte(out), &env)
+	if env.Data.Skipped != 1 {
+		t.Fatalf("skipped=%d", env.Data.Skipped)
+	}
+	if !strings.Contains(env.Data.Items[0].Reason, "未开启自动换票") {
+		t.Fatalf("原因不对: %+v", env.Data.Items[0])
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Fatalf("开关关掉了还打了 %d 次网络", n)
 	}
 }

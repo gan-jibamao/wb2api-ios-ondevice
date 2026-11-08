@@ -12,6 +12,8 @@ struct ImportSheet: View {
     @State private var working = false
     @State private var showPicker = false
     @State private var localError: String?
+    /// 只给 refreshToken 的条目是否联网换票（会消耗 RT 轮换额度，默认开）
+    @AppStorage("importAutoRefresh") private var autoRefresh = true
 
     var body: some View {
         NavigationView {
@@ -120,23 +122,37 @@ struct ImportSheet: View {
     }
 
     private var bottomBar: some View {
-        HStack(spacing: 12) {
-            Button(action: { showPicker = true }) {
-                Label("选文件", systemImage: "folder")
-                    .frame(maxWidth: .infinity)
+        VStack(spacing: 8) {
+            Toggle(isOn: $autoRefresh) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("自动换票").font(.footnote)
+                    Text(autoRefresh
+                         ? "只有 refreshToken 的条目会联网换新票（旧 RT 会被作废）"
+                         : "只导入带 accessToken 的条目，纯 RT 条目跳过")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
             }
-            .buttonStyle(BorderedButtonStyle())
             .disabled(working)
 
-            Button(action: run) {
-                HStack(spacing: 6) {
-                    if working { ProgressView().scaleEffect(0.8) }
-                    Text(working ? "导入中…" : "开始导入")
+            HStack(spacing: 12) {
+                Button(action: { showPicker = true }) {
+                    Label("选文件", systemImage: "folder")
+                        .frame(maxWidth: .infinity)
                 }
-                .frame(maxWidth: .infinity)
+                .buttonStyle(BorderedButtonStyle())
+                .disabled(working)
+
+                Button(action: run) {
+                    HStack(spacing: 6) {
+                        if working { ProgressView().scaleEffect(0.8) }
+                        Text(working ? "导入中…" : "开始导入")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(BorderedProminentButtonStyle())
+                .disabled(working || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .buttonStyle(BorderedProminentButtonStyle())
-            .disabled(working || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding(.horizontal)
         .padding(.vertical, 12)
@@ -158,9 +174,10 @@ struct ImportSheet: View {
         working = true
         let payload = text
         let gateway = gw   // 显式取出来，避免转义闭包里隐式 self 捕获
+        let allowRefresh = autoRefresh
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let r = gateway.importJSON(payload)
+            let r = gateway.importJSON(payload, allowRefresh: allowRefresh)
             DispatchQueue.main.async {
                 self.working = false
                 if let r = r {

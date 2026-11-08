@@ -278,6 +278,20 @@ func Parse(raw []byte) (*Auth, error) {
 	return &a, nil
 }
 
+// NewForRefresh 构造一个只带 refreshToken 的凭据（导入换票用）。
+//
+// 唯一用途：把 refreshToken 交给 upstream.RefreshToken 换出新票后，
+// 由调用方按正常落盘流程写文件。realm 走 ResolveRealm 归一，避免调用方漏传。
+func NewForRefresh(uid, refreshToken, domain, realm, enterpriseID string) *Auth {
+	return &Auth{
+		UID:          uid,
+		RefreshToken: refreshToken,
+		Domain:       domain,
+		realm:        ResolveRealm(realm, domain),
+		EnterpriseID: enterpriseID,
+	}
+}
+
 // SaveAtomic 以嵌套形原子写回 FilePath（tmp + rename），保持嵌套形（插件可读）格式。
 // 全程持 a.mu：防止与 RefreshToken 修改 token 字段并发，杜绝写回半更新。
 // 防御：accessToken 为空时拒绝写回，避免误用空凭证覆盖有效文件。

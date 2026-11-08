@@ -118,10 +118,11 @@ func WbDeleteAccount(cDataDir, cUID *C.char) *C.char {
 }
 
 // WbImportJSON 导入账号 JSON；返回 {"ok":true,"data":{…统计…}} 或 {"ok":false,"error":"…"}。
+// cAllowRefresh 非 0 时，只有 refreshToken 的条目会先联网换票再落盘。
 //
 //export WbImportJSON
-func WbImportJSON(cDataDir, cJSON *C.char) *C.char {
-	out, err := wbios.ImportJSON(C.GoString(cDataDir), C.GoString(cJSON))
+func WbImportJSON(cDataDir, cJSON *C.char, cAllowRefresh C.int) *C.char {
+	out, err := wbios.ImportJSON(C.GoString(cDataDir), C.GoString(cJSON), cAllowRefresh != 0)
 	if err != nil {
 		return C.CString(errJSON(err))
 	}
