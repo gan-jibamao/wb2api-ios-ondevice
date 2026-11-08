@@ -97,6 +97,30 @@ func ImportJSON(dataDir, raw string) (string, error) {
 			continue
 		}
 
+		name := "workbuddy-" + sanitizeUID(na.UID) + ".json"
+		out := filepath.Join(dir, name)
+		_, statErr := os.Stat(out)
+		existed := statErr == nil
+
+		// 更新已有账号时，新载荷里没带的展示字段不能把旧的抹掉
+		// （典型：只拿新 token 重导一次，昵称/企业 ID 不该消失）。
+		if existed {
+			if old, perr := loadAuthFile(out); perr == nil {
+				if na.Nickname == "" {
+					na.Nickname = old.Nickname
+				}
+				if na.EnterpriseID == "" {
+					na.EnterpriseID = old.EnterpriseID
+				}
+				if na.DeviceToken == "" {
+					na.DeviceToken = old.DeviceToken
+				}
+				if na.Realm == "" {
+					na.Realm = old.Realm()
+				}
+			}
+		}
+
 		doc := map[string]any{
 			"account": map[string]any{
 				"uid":          na.UID,
@@ -132,11 +156,6 @@ func ImportJSON(dataDir, raw string) (string, error) {
 			continue
 		}
 
-		name := "workbuddy-" + sanitizeUID(na.UID) + ".json"
-		out := filepath.Join(dir, name)
-		_, statErr := os.Stat(out)
-		existed := statErr == nil
-
 		if werr := writeFileAtomic(out, b); werr != nil {
 			res.Skipped++
 			res.Items = append(res.Items, ImportItem{UID: na.UID, Status: "skipped", Reason: werr.Error()})
@@ -161,6 +180,15 @@ func ImportJSON(dataDir, raw string) (string, error) {
 
 	b, _ := json.Marshal(map[string]any{"ok": true, "data": res})
 	return string(b), nil
+}
+
+// loadAuthFile 读一个已有凭证文件（更新时用于保留展示字段）。
+func loadAuthFile(path string) (*auth.Auth, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return auth.Parse(b)
 }
 
 // writeFileAtomic 写临时文件再 rename，权限 0600（与 login.go 落盘一致）。

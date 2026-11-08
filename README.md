@@ -46,6 +46,7 @@ Go 内核编译成 iOS 静态库（`-buildmode=c-archive`），SwiftUI 外壳，
 - `realm` 缺失按 domain 后缀推断（`.workbuddy.ai` → global，否则 cn）
 - **只给 refreshToken 的条目会被跳过并给出原因**，不会写出半个文件（本版不做自动换票）
 - 写盘前强制过一次 `auth.Parse` 自检，网关读不出来的文件绝不落盘
+- 重复导入同一 uid 按「更新」处理；新载荷没带的昵称/企业 ID 沿用旧文件，不会把展示字段抹掉
 - 账号池目录每 5 秒做一次指纹比对（`internal/pool/watch.go`），**导入后无需重启网关**
 
 ## 构建

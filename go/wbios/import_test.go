@@ -186,3 +186,29 @@ func TestImportRejectsPathTraversal(t *testing.T) {
 		t.Fatal("发生了目录穿越")
 	}
 }
+
+// 11. 更新账号时，载荷里没带的昵称/企业 ID 不能被抹掉
+func TestImportUpdateKeepsNickname(t *testing.T) {
+	d := t.TempDir()
+	first := `{"account":{"uid":"u-11","nickname":"老王","enterpriseId":"e-11"},
+	           "auth":{"accessToken":"AT11","expiresAt":1795097981}}`
+	if r := runImport(t, d, first); r.Added != 1 {
+		t.Fatalf("first added=%d %+v", r.Added, r.Items)
+	}
+	// 只换 token，不带昵称
+	second := `{"uid":"u-11","accessToken":"AT11-new"}`
+	if r := runImport(t, d, second); r.Updated != 1 {
+		t.Fatalf("second updated=%d %+v", r.Updated, r.Items)
+	}
+	b, _ := os.ReadFile(filepath.Join(d, "auths", "workbuddy-u-11.json"))
+	a, err := auth.Parse(b)
+	if err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if a.Nickname != "老王" || a.EnterpriseID != "e-11" {
+		t.Fatalf("展示字段被抹掉: nick=%q ent=%q", a.Nickname, a.EnterpriseID)
+	}
+	if a.AccessToken != "AT11-new" {
+		t.Fatalf("token 未更新: %q", a.AccessToken)
+	}
+}
