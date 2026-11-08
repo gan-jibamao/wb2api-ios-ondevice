@@ -1,0 +1,7 @@
+ios/GoLib/
+ios/build/
+ios/WB2API.xcodeproj/
+*.ipa
+go/auths/
+go/data/
+go/config.json

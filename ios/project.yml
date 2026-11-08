@@ -1,0 +1,59 @@
+name: WB2API
+options:
+  bundleIdPrefix: com.cuicsi
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+
+targets:
+  WB2API:
+    type: application
+    platform: iOS
+    sources:
+      - path: WB2API
+        excludes:
+          - "Info.plist"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cuicsi.wb2api
+        PRODUCT_NAME: WB2API
+        INFOPLIST_FILE: WB2API/Info.plist
+        SWIFT_OBJC_BRIDGING_HEADER: WB2API/WB2API-Bridging-Header.h
+        HEADER_SEARCH_PATHS:
+          - "$(SRCROOT)/GoLib"
+        LIBRARY_SEARCH_PATHS:
+          - "$(SRCROOT)/GoLib"
+        OTHER_LDFLAGS:
+          - "-lwb"
+          - "-lresolv"
+          - "-lpthread"
+          - "-framework"
+          - "CoreFoundation"
+          - "-framework"
+          - "Security"
+          - "-framework"
+          - "Foundation"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGNING_ALLOWED: "NO"
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: "NO"
+        ENABLE_BITCODE: "NO"
+
+schemes:
+  WB2API:
+    build:
+      targets:
+        WB2API: all
+    run:
+      config: Debug
+    archive:
+      config: Release

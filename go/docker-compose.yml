@@ -1,0 +1,16 @@
+services:
+  wb2api:
+    build:
+      context: .
+    image: workbuddy2api:V1
+    container_name: workbuddy2api
+    restart: unless-stopped
+    network_mode: bridge
+    environment:
+      - TZ=Asia/Shanghai
+    ports:
+      - "7863:7863"
+    volumes:
+      - ./auths:/app/auths
+      - ./data:/app/data
+      - ./config.json:/app/config.json:ro
