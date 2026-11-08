@@ -157,20 +157,21 @@ struct ImportSheet: View {
         result = nil
         working = true
         let payload = text
+        let gateway = gw   // 显式取出来，避免转义闭包里隐式 self 捕获
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let r = gw.importJSON(payload)
+            let r = gateway.importJSON(payload)
             DispatchQueue.main.async {
-                working = false
+                self.working = false
                 if let r = r {
-                    result = r
+                    self.result = r
                     if r.skipped == r.total {
-                        localError = "全部被跳过，看下面每条的跳过原因"
+                        self.localError = "全部被跳过，看下面每条的跳过原因"
                     } else {
-                        gw.toast = "新增 \(r.added) · 更新 \(r.updated) · 跳过 \(r.skipped)"
+                        gateway.toast = "新增 \(r.added) · 更新 \(r.updated) · 跳过 \(r.skipped)"
                     }
                 } else {
-                    localError = gw.alert ?? "导入失败"
+                    self.localError = gateway.alert ?? "导入失败"
                 }
             }
         }
